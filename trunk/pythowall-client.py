@@ -8,9 +8,9 @@ paths = []
 
 # SSH
 paths.append({'path': '/var/log/auth.log',
-			  'regex': 'sshd.*?Failed password for .*? from ([0-9\.]*).*',
+			  'regex': 'sshd.*?Failed password for .*? from ([0-9\.]*) port [0-9]*',
 			  'maxRetries': 3,
-			  'jailtime': 1}) # 6 hours
+			  'jailtime': 6*60}) # 6 hours
 """
 # Asterisk
 paths.append({'path': '/var/log/asterisk/messages',
@@ -25,17 +25,25 @@ paths.append({'path': '/var/log/auth.log',
 """
 
 def updateList(filterList = ''):
-	global iptables, clients, iptablesList
+	global iptables, clients, iptablesList, serverIP
 	toBeRemoved = []
 	for element in clients: # Purge clients not active anymore
+		if clients[element]['retries'] >= clients[element]['maxRetries']:
+			query = 'attacker=' + element + '&jailtime=' + str(clients[element]['jailtime'])
+			try:
+				filterList = urllib.urlopen('http://' + serverIP + ':4010/addFilter?'+query).read().split('\n')
+				updateList(filterList)
+				toBeRemoved.append(element)
+			except IOError:
+				pass
 		if (clients[element]['time'] + 3600) < time.time():
 			toBeRemoved.append(element)
 	for element in toBeRemoved:
-		print "Removing " + element
 		del(clients[element])
-	if filterList != '':
+	if (filterList != '') and (filterList != None):
 		iptablesLines = os.popen(iptables + ' -L pythowall -n --line-numbers').read().strip('\n').split('\n')[2:]
 		iptablesList = []
+		iptablesLines.reverse()
 		for element in iptablesLines: # First delete expired IPs
 			if len(element) != 0:
 				ruleID = element.split()[0]
@@ -44,7 +52,6 @@ def updateList(filterList = ''):
 					if filterList.index(attackerIP) != None:
 						iptablesList.append(attackerIP)
 				except ValueError:
-					#print "Removing " + attackerIP
 					os.system(iptables + ' -D pythowall ' + ruleID)
 		for element in filterList:
 			if len(element) != 0: # Then add new IPs
@@ -52,14 +59,15 @@ def updateList(filterList = ''):
 					if iptablesList.index(element):
 						pass
 				except ValueError:
-					#print "Adding " + element
 					os.system(iptables + ' -I pythowall -s ' + element + ' -j DROP')
 					iptablesList.append(element)
 	else:
 		while (isRunning):
-			#print "Updating..."
-			filterList = urllib.urlopen('http://' + serverIP + ':4010/getStatus').read().split('\n')
-			updateList(filterList)
+			try:
+				filterList = urllib.urlopen('http://' + serverIP + ':4010/getStatus').read().split('\n')
+				updateList(filterList)
+			except IOError:
+				pass
 			time.sleep(20)
 
 def loggerThread(filename, regex, jailtime=30, maxRetries=5):
@@ -88,20 +96,24 @@ def loggerThread(filename, regex, jailtime=30, maxRetries=5):
 				if clients.has_key(attacker):
 					element = clients[attacker]
 					if (element['retries']+1 >= maxRetries) and (time.time() <= (element['time']+3600)):
-						del(clients[attacker])
 						query = 'attacker=' + attacker + '&jailtime=' + str(jailtime)
-						filterList = urllib.urlopen('http://' + serverIP + ':4010/addFilter?'+query).read().split('\n')
-						updateList(filterList)
+						try:
+							filterList = urllib.urlopen('http://' + serverIP + ':4010/addFilter?'+query).read().split('\n')
+							updateList(filterList)
+							del(clients[attacker])
+						except IOError:
+							pass
 					else:
 						element['retries'] += 1
 						element['time'] = time.time()
+						element['maxRetries'] = maxRetries
+						element['jailtime'] = jailtime
 						clients[attacker] = element
 				else:
 					try:
 						if iptablesList.index(attacker):
 							pass
 					except ValueError:
-						#print "Warning for " + attacker
 						clients[attacker] = {'retries': 1, 'time': time.time()}
 
 fpid = os.fork() # Daemonize

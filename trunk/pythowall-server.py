@@ -24,7 +24,7 @@ class PythoWall (BaseHTTPServer.BaseHTTPRequestHandler):
 				self.attackers.remove([element[0], element[1]])
 		retVal = ''
 		for element in self.attackers:
-			retVal += element[0]
+			retVal += element[0] + '\n'
 		return retVal.strip('\n')
 	def log_message(self, format, *args):
 		pass
